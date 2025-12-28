@@ -95,8 +95,8 @@ location_name = "ยังไม่ระบุ"
 
 if mode == "🌐 Real-time":
     # 1. รับ API Key
-    owm_key = st.sidebar.text_input("OWM Key", value="a013dafdc6052c44dbcc4a1526beb43a", type="password")
-    tomtom_key = st.sidebar.text_input("TomTom Key", value="3jXFI0SBVjEHLS2d3k4A5XcFgQwN3fzE", type="password")
+    owm_key = st.sidebar.text_input("OWM Key", value="ใส่_KEY_OWM_ที่นี่", type="password")
+    tomtom_key = st.sidebar.text_input("TomTom Key", value="ใส่_KEY_TomTom_ที่นี่", type="password")
     
     st.sidebar.markdown("---")
     
