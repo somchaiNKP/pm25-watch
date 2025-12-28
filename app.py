@@ -18,99 +18,158 @@ def load_model():
 model = load_model()
 
 # ==========================================
-# 2. ฟังก์ชันดึงข้อมูล (เหมือนเดิม)
+# 2. ฟังก์ชันหาพิกัดจากชื่อเมือง (Geocoding) - **ของใหม่**
 # ==========================================
-def get_realtime_data_full(owm_key, tomtom_key):
+def get_coordinates(city_name, api_key):
+    # ค้นหาพิกัดจากชื่อเมือง (เติม ,TH ต่อท้ายเพื่อให้รู้ว่าเป็นไทย)
+    try:
+        url = f"http://api.openweathermap.org/geo/1.0/direct?q={city_name},TH&limit=1&appid={api_key}"
+        resp = requests.get(url, timeout=5)
+        data = resp.json()
+        
+        if data:
+            lat = data[0]['lat']
+            lon = data[0]['lon']
+            found_name = data[0]['name']
+            return lat, lon, found_name
+        else:
+            return None, None, None
+    except:
+        return None, None, None
+
+# ==========================================
+# 3. ฟังก์ชันดึงข้อมูล (รับ Lat/Lon แบบ Dynamic)
+# ==========================================
+def get_realtime_data_dynamic(lat, lon, owm_key, tomtom_key):
     wind, traffic, actual_pm25 = 0.0, 0.0, None
-    lat, lon = 14.0742, 100.6152
     
+    # 3.1 ดึงลม
     try:
         url_weather = f"http://api.openweathermap.org/data/2.5/weather?lat={lat}&lon={lon}&appid={owm_key}&units=metric"
-        resp = requests.get(url_weather)
+        resp = requests.get(url_weather, timeout=5)
         wind = resp.json()['wind']['speed']
     except: pass
 
+    # 3.2 ดึงฝุ่นจริง
     try:
         url_air = f"http://api.openweathermap.org/data/2.5/air_pollution?lat={lat}&lon={lon}&appid={owm_key}"
-        resp = requests.get(url_air)
+        resp = requests.get(url_air, timeout=5)
         actual_pm25 = resp.json()['list'][0]['components']['pm2_5']
     except: actual_pm25 = None
 
+    # 3.3 ดึงรถติด
     try:
         url_traffic = f"https://api.tomtom.com/traffic/services/4/flowSegmentData/absolute/10/json?point={lat},{lon}&key={tomtom_key}"
-        resp = requests.get(url_traffic)
+        resp = requests.get(url_traffic, timeout=5)
         data = resp.json()['flowSegmentData']
-        traffic_score = (1 - (data['currentSpeed'] / data['freeFlowSpeed'])) * 10
+        # สูตร: ถ้าไม่มีข้อมูล FreeFlow ให้ใช้ค่า SpeedLimit แทน
+        free_flow = data.get('freeFlowSpeed', data['currentSpeed']) 
+        if free_flow > 0:
+            traffic_score = (1 - (data['currentSpeed'] / free_flow)) * 10
+        else:
+            traffic_score = 0
         traffic = round(max(0, min(10, traffic_score)), 2)
     except: pass
 
     return wind, traffic, actual_pm25
 
 # ==========================================
-# 3. UI ส่วนแสดงผล (ปรับแก้เพื่อมือถือ)
+# 4. UI ส่วนแสดงผล (Thailand Edition)
 # ==========================================
-# ❌ ลบ layout="wide" ออก เพื่อให้พอดีจอมือถือ
-st.set_page_config(page_title="PM 2.5 Mobile", page_icon="📱")
+st.set_page_config(page_title="PM 2.5 TH", page_icon="🇹🇭")
 
-st.title("📱 PM 2.5 Watch")
-st.caption("📍 พิกัด: คลองหนึ่ง (Mobile Version)")
+st.title("🇹🇭 PM 2.5 Thailand")
+st.caption("ระบบพยากรณ์ฝุ่นระดับอำเภอ")
 
-# แสดงเวลา
 tz = pytz.timezone('Asia/Bangkok')
-current_time = datetime.now(tz).strftime("%H:%M น. (%d/%m)")
-st.info(f"🕒 อัปเดตล่าสุด: {current_time}")
+current_time = datetime.now(tz).strftime("%H:%M น.")
+st.info(f"🕒 เวลาตรวจสอบ: {current_time}")
 
 # --- Sidebar ---
 st.sidebar.header("⚙️ ตั้งค่า")
-mode = st.sidebar.radio("โหมด:", ["🌐 Real-time", "🎮 จำลองค่า"])
+mode = st.sidebar.radio("โหมด:", ["🌐 Real-time", "🎮 Simulation"])
 
+# ตัวแปรเริ่มต้น
 wind, traffic, actual_pm25, predicted_pm25 = 0.0, 0.0, None, 0.0
+location_name = "ยังไม่ระบุ"
 
 if mode == "🌐 Real-time":
-    # ใส่ API Key ตรง value เหมือนเดิม
+    # 1. รับ API Key
     owm_key = st.sidebar.text_input("OWM Key", value="a013dafdc6052c44dbcc4a1526beb43a", type="password")
     tomtom_key = st.sidebar.text_input("TomTom Key", value="3jXFI0SBVjEHLS2d3k4A5XcFgQwN3fzE", type="password")
     
-    if st.button("🔄 กดเพื่อดึงข้อมูลล่าสุด", use_container_width=True): # ปุ่มกว้างเต็มจอ กดง่าย
-        with st.spinner('กำลังโหลด...'):
-            wind, traffic, actual_pm25 = get_realtime_data_full(owm_key, tomtom_key)
-            st.session_state['wind'] = wind
-            st.session_state['traffic'] = traffic
-            st.session_state['actual_pm25'] = actual_pm25
+    st.sidebar.markdown("---")
     
+    # 2. รับชื่อเมือง (ภาษาอังกฤษจะแม่นยำกว่า)
+    user_city = st.sidebar.text_input("🔍 ชื่ออำเภอ/เขต (ภาษาอังกฤษ)", value="Pathum Wan")
+    st.sidebar.caption("ตัวอย่าง: Chatuchak, Mueang Chiang Mai, Hat Yai")
+
+    # 3. ปุ่มค้นหา
+    if st.button("📍 ค้นหาและพยากรณ์", use_container_width=True):
+        if not owm_key or not tomtom_key:
+            st.error("กรุณาใส่ API Key ก่อนครับ")
+        else:
+            with st.spinner(f"กำลังบินไปที่ {user_city}..."):
+                # หาพิกัดก่อน
+                lat, lon, found_name = get_coordinates(user_city, owm_key)
+                
+                if lat:
+                    st.success(f"เจอพิกัด: {found_name} ({lat:.2f}, {lon:.2f})")
+                    location_name = found_name
+                    
+                    # ดึงข้อมูลจากพิกัดนั้น
+                    wind, traffic, actual_pm25 = get_realtime_data_dynamic(lat, lon, owm_key, tomtom_key)
+                    
+                    # บันทึกสถานะ
+                    st.session_state['wind'] = wind
+                    st.session_state['traffic'] = traffic
+                    st.session_state['actual_pm25'] = actual_pm25
+                    st.session_state['location'] = location_name
+                else:
+                    st.error("❌ หาชื่อเมืองไม่เจอ ลองพิมพ์เป็นภาษาอังกฤษดูครับ (เช่น 'Bang Rak')")
+
+    # ดึงค่าเก่ามาแสดงถ้ามี
     if 'wind' in st.session_state:
         wind = st.session_state['wind']
         traffic = st.session_state['traffic']
         actual_pm25 = st.session_state.get('actual_pm25', None)
+        location_name = st.session_state.get('location', user_city)
 
-elif mode == "🎮 จำลองค่า":
+elif mode == "🎮 Simulation":
+    location_name = "โหมดจำลอง"
     wind = st.slider("ลม (m/s)", 0.0, 20.0, 5.0)
     traffic = st.slider("รถติด (0-10)", 0.0, 10.0, 5.0)
     actual_pm25 = st.number_input("ค่าจริง (เทียบ)", value=0.0)
 
 # ==========================================
-# 4. Dashboard (จัดเรียงแนวตั้ง)
+# 5. Dashboard
 # ==========================================
 if model:
-    # คำนวณ + จูนค่า
+    # 📍 ส่วนหัวข้อ (แสดงชื่อเมือง)
+    st.markdown(f"### 🚩 พื้นที่: {location_name}")
+
+    # คำนวณ AI
     input_df = pd.DataFrame([[traffic, wind]], columns=['Traffic_Score', 'Wind_Speed'])
     base_pred = model.predict(input_df)[0]
-    seasonal_offset = 80.0 # ค่าจูน (Calibration)
+    
+    # 🔧 Calibration Slider (สำคัญมากสำหรับต่างจังหวัด)
+    # เพราะเชียงใหม่กับกรุงเทพฯ มีค่าฝุ่นพื้นฐานไม่เท่ากัน
+    with st.expander("🛠️ ปรับจูนค่าพื้นฐาน (Calibration)"):
+        seasonal_offset = st.slider("ระดับฝุ่นพื้นฐานในพื้นที่ (Offset)", 0.0, 200.0, 80.0, help="ปรับเพิ่มลดตามฤดูกาลหรือพื้นที่")
+    
     predicted_pm25 = base_pred + seasonal_offset
 
     st.markdown("---")
-
-    # ส่วนที่ 1: ปัจจัย (Input) - ใช้ 2 คอลัมน์พอกล้อมแกล้ม
+    
+    # Grid Layout
     c1, c2 = st.columns(2)
     c1.metric("🌬️ ลม", f"{wind} m/s")
     c2.metric("🚗 รถ", f"{traffic}/10")
 
     st.markdown("---")
-    
-    # ส่วนที่ 2: ผลลัพธ์ (Result) - เรียงแนวตั้งให้ชัดๆ
     st.subheader("📊 ผลวิเคราะห์")
 
-    # กล่องที่ 1: AI (พระเอกของเรา)
+    # AI Result
     with st.container():
         st.markdown("#### 🤖 AI พยากรณ์")
         if predicted_pm25 > 50:
@@ -120,16 +179,13 @@ if model:
         else:
             st.success(f"🟢 {predicted_pm25:.2f} (อากาศดี)")
 
-    # กล่องที่ 2: ค่าจริง (ถ้ามี)
+    # Actual Result
     if actual_pm25 is not None:
         with st.container():
-            st.markdown("#### 📡 ค่าจริงจากเซนเซอร์")
+            st.markdown("#### 📡 ค่าจริง (Sensor)")
             st.info(f"{actual_pm25:.2f} µg/m³")
-            
-            # คำนวณ Diff
             diff = predicted_pm25 - actual_pm25
-            msg = f"แม่นยำ (ต่างกัน {diff:.1f})" if abs(diff) < 20 else f"คลาดเคลื่อน ({diff:+.1f})"
-            st.caption(f"ผลประเมิน: {msg}")
+            st.caption(f"Error: {diff:+.1f}")
 
 else:
     st.error("ไม่พบไฟล์โมเดล")
